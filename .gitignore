@@ -4,3 +4,4 @@ runs/
 longmemeval_s_cleaned.json
 *.json
 !package.json
+.DS_Store
