@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+runs/
+longmemeval_s_cleaned.json
+*.json
+!package.json
