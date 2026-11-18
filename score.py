@@ -12,8 +12,8 @@ the paper's while that model still exists, score the same answers with both:
 
 A judge is "<gemini model>:<thinking level>" or "openai:<model>". Per run and judge this writes
 judgments.<judge>.jsonl (question_id, label, raw judge reply) and resumes if rerun; delete the
-file to re-judge. It then prints accuracy, overall and per question type, beside compression and
-evidence retention.
+file to re-judge. It writes the matching summary to results.<judge>.txt, and also prints accuracy,
+overall and per question type, beside compression and evidence retention.
 
 One deviation from the official script: it labels a reply correct if it contains "yes" anywhere,
 which is safe only under its 10-token cap. Here a reply must start with "yes"; replies starting
@@ -111,26 +111,32 @@ def judge_run(run_dir, references, judge, workers):
 def summarise(run_dir, judge, judged, references):
     stats = {row["question_id"]: row for row in read_jsonl(f"{run_dir}/contexts.jsonl")}
     correct = sum(row["label"] for row in judged.values())
-    print(f"\n{run_dir}  [{judge}]: accuracy {correct / len(judged):.3f} ({correct}/{len(judged)})")
+    lines = [f"{run_dir}  [{judge}]: accuracy {correct / len(judged):.3f} ({correct}/{len(judged)})"]
     unclear = sum(row["unclear"] for row in judged.values())
     if unclear:
-        print(f"  WARNING: {unclear} judge replies were neither yes nor no (counted as wrong)")
+        lines.append(f"  WARNING: {unclear} judge replies were neither yes nor no (counted as wrong)")
     if len(judged) < len(stats):
-        print(f"  WARNING: {len(stats) - len(judged)} replayed instances have no scored answer")
+        lines.append(f"  WARNING: {len(stats) - len(judged)} replayed instances have no scored answer")
     scored = [stats[qid] for qid in judged if qid in stats]
     if scored:
         total = lambda key: sum(row[key] for row in scored)
-        print(f"  final context   {total('context_tokens') / total('unedited_tokens'):.1%} of unedited (est. tokens)")
-        print(f"  total input K   {total('k_tokens') / total('k_unedited_tokens'):.1%} of unedited (est. tokens)")
+        lines.append(f"  final context   {total('context_tokens') / total('unedited_tokens'):.1%} of unedited (est. tokens)")
+        lines.append(f"  total input K   {total('k_tokens') / total('k_unedited_tokens'):.1%} of unedited (est. tokens)")
         if total("evidence_total"):
-            print(f"  evidence kept   {total('evidence_kept') / total('evidence_total'):.1%} of evidence turns"
-                  f" ({total('evidence_edited')} of them edited)")
+            lines.append(f"  evidence kept   {total('evidence_kept') / total('evidence_total'):.1%} of evidence turns"
+                         f" ({total('evidence_edited')} of them edited)")
     by_type = defaultdict(list)
     for qid, row in judged.items():
         question_type = references[qid]["question_type"]
         by_type["abstention (_abs)" if "_abs" in qid else question_type].append(row["label"])
     for question_type, labels in sorted(by_type.items()):
-        print(f"  {question_type:<28} {sum(labels) / len(labels):.3f} ({sum(labels)}/{len(labels)})")
+        lines.append(f"  {question_type:<28} {sum(labels) / len(labels):.3f} ({sum(labels)}/{len(labels)})")
+
+    summary = "\n".join(lines)
+    print("\n" + summary)
+    result_path = f"{run_dir}/results.{re.sub(r'[^A-Za-z0-9.-]+', '_', judge)}.txt"
+    with open(result_path, "w") as out:
+        out.write(summary + "\n")
 
 
 def compare(judge, judged, other_judge, other_judged):
