@@ -2,3 +2,6 @@ google-genai>=1.50
 tqdm
 backoff
 numpy
+torch
+transformers
+scikit-learn

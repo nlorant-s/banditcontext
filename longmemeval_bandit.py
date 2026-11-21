@@ -31,6 +31,16 @@ Each run directory runs/<controller>/<run_id>/ holds:
 
 Score with:
     python score.py longmemeval_s_cleaned.json runs/random/exp01 runs/vanilla/exp01
+
+QUESTION ORACLE (on by default; disable with --no-question-oracle):
+    With the oracle on, replay() gives the controller the instance's final question before the
+    first exchange (Controller.begin), so it can edit the context knowing what will be asked.
+    A live chat has no such knowledge: the question does not exist yet while the context is being
+    edited. Runs with the oracle measure question-aware pruning (closer to retrieval) and should
+    be compared with a question-aware baseline, not only vanilla/random; their token savings are
+    not live-chat savings. With --no-question-oracle, begin() receives None instead and the run
+    measures online, question-blind context management. The setting is saved in config.json, so
+    the two kinds of run cannot be mixed under one --run-id.
 """
 
 import argparse
@@ -121,6 +131,12 @@ def tokens(turns, question=None):
     return math.ceil(sum(len(text) for _, texts in render(turns, question) for text in texts) / 4)
 
 
+def oracle_question(instance):
+    """The question as shown to the controller when the question oracle is on: the bare
+    question, without the date header that final_question() adds for the frontier model."""
+    return instance["question"]
+
+
 def final_question(instance):
     return f"[Current date: {instance['question_date']}]\n{instance['question']}"
 
@@ -176,6 +192,10 @@ class Controller:
     def __init__(self, arms):
         self.arms = arms
 
+    def begin(self, question_id, question):
+        """Called once before each instance is replayed. `question` is the final question
+        (oracle_question) when the question oracle is on, else None. ORACLE: see module docstring."""
+
     def act(self, turns, t, T, rng):
         """Called after exchange t of T - 1 (the T-th frontier call is the final question).
         Return (arm name, turn index); the index is None for null."""
@@ -207,9 +227,12 @@ def replay(instance, controller, args, log_step, log):
     conversation = exchanges(instance, args.distractors, rng)
     question = final_question(instance)
     T = len(conversation) + 1  # frontier calls a live chat would make: one per exchange + the question
+    # ORACLE: the controller sees the final question before any edit only if --question-oracle.
+    controller.begin(qid, oracle_question(instance) if args.question_oracle else None)
     turns, unedited = [], []
     k = k_unedited = 0         # total input tokens over those T calls, with and without editing
-    log(f"\n{'=' * 80}\n{qid}  ({len(conversation)} exchanges)\n{'=' * 80}\n")
+    log(f"\n{'=' * 80}\n{qid}  ({len(conversation)} exchanges)"
+        f"{', question oracle ON' if args.question_oracle else ''}\n{'=' * 80}\n")
     for t, exchange in enumerate(conversation, 1):
         users = [turn for turn in exchange if turn["role"] == "user"]
         k += tokens(turns + users)          # what the frontier call at exchange t would have read
@@ -298,7 +321,7 @@ def run_replay(args):
     config = {
         "controller": args.controller, "arms": arms, "seed": args.seed, "data": args.data,
         "limit": args.limit, "stratify": not args.no_stratify, "distractors": args.distractors,
-        "controlled": CONTROLLED, "editor": EDITOR,
+        "controlled": CONTROLLED, "editor": EDITOR, "question_oracle": args.question_oracle,
     }
     config_path = f"{out_dir}/config.json"
     if os.path.exists(config_path):
@@ -386,6 +409,9 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--run-id", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
     p.add_argument("--verbose", action="store_true", help="echo decisions to stderr")
+    p.add_argument("--question-oracle", action=argparse.BooleanOptionalAction, default=True,
+                   help="give the controller the final question before editing (not available in "
+                        "a live chat; see QUESTION ORACLE in the module docstring)")
     p = phases.add_parser("answer", help="answer each question on its final context")
     p.add_argument("run_dir")
     p.add_argument("--workers", type=int, default=8)
